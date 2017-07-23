@@ -53,15 +53,18 @@ def get_confirm_token(response):
 def save_response_content(response, destination):
     chunk_size = 32768
 
+    print('start saving {}'.format(destination))
     with open(destination, "wb") as f:
         for chunk in response.iter_content(chunk_size):
             if chunk:  # filter out keep-alive new chunks
                 f.write(chunk)
+    print('saved {}'.format(destination)) 
 
 
 # Extract .tar.gz and .tgz files
 def extract_tar(tar_path, extract_path='.'):
     tar = tarfile.open(tar_path, 'r')
+    print('start extracting {}'.format(tar_path))
     for item in tar:
         f_name = os.path.basename(os.path.abspath(item.name))
         if not f_name.startswith('.'):
@@ -69,6 +72,7 @@ def extract_tar(tar_path, extract_path='.'):
             if item.name.find('.tgz') != -1 or item.name.find('.tar') != -1:
                 extract_tar(item.name, extract_path + '/' + item.name[:item.name.rfind('/')])
     os.remove(tar_path)
+    print('finished extracting {}'.format(tar_path))
 
 
 # Download and extracts the fila at url
@@ -84,7 +88,8 @@ def download_cub(data_dir):
     if os.path.exists(data_dir):
         print('Found CUB - skip')
         return
-
+    
+    os.mkdir(data_dir)
     url = '0B-y41dOfPRwROVBWUjlpM1BhbzQ'
     download_extract_tar(url, data_dir)
 
@@ -96,6 +101,7 @@ def download_oxford_102(data_dir):
         print('Found Oxford-102 - skip')
         return
 
+    os.mkdir(data_dir)
     url = '0B-y41dOfPRwRUzVxU3pMTEtaT1U'
     download_extract_tar(url, data_dir)
 
