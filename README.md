@@ -1,5 +1,5 @@
 # stackGAN
-stackGAN implementation by tensorflow
+stackGAN implementation by tensorflow <br/>
 mostly referenced by @Carpedm20/BEGAN-tensorflow
 
 
