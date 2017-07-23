@@ -20,7 +20,7 @@ import tarfile
 
 parser = argparse.ArgumentParser(description='Download dataset for StackGAN.')
 parser.add_argument('datasets', metavar='D', type=str.lower, nargs='+', choices=['cub', 'oxford-102'],
-                   help='name of dataset to download [CUB, Oxford-102]')
+                   help='name of dataset to download [cub, oxford-102]')
 parser.add_argument('-p', '--path', metavar='dir', type=str, nargs=1,
                    help='path to store the data (default ./datasets)')
 
