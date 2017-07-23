@@ -12,7 +12,7 @@ def deconv_size(size, stride):
     return int(math.ceil(float(size) / float(stride)))
 
 class StackGAN(object):
-    def __init__(self, sess, N_g = 128, N_z = 100, N_d = 128, N_embed = 300, W_o = 64, H_o = 64, c_dim = 3, gfc_dim = 1024, ld = 1, batch_size = 64):
+    def __init__(self, sess, N_g = 128, N_z = 100, N_d = 128, N_embed = 300, W_o = 64, H_o = 64, c_dim = 3, gfc_dim = 128, ld = 1, batch_size = 64):
         self.N_g = N_g
         self.N_z = N_z
         self.N_d = N_d
@@ -20,6 +20,11 @@ class StackGAN(object):
         self.W_o = W_o
         self.H_o = H_o
         self.c_dim = c_dim
+
+        self.s = W_o
+        self.s2, self.s4, self.s8, self.s16 =\
+            int(self.s / 2), int(self.s / 4), int(self.s / 8), int(self.s / 16)
+
         self.gfc_dim = gfc_dim
         self.batch_size = batch_size
 
@@ -31,6 +36,13 @@ class StackGAN(object):
         self.z = tf.placeholder(tf.float32, [None, self.N_z])
         self.sent = tf.placeholder(tf.float32, [None, self.N_embed])
         self.x = tf.placeholder(tf.float32, [None, self.N_s1_img])
+
+        ## concat with noise
+        multNormal2 = ds.MultivariateNormalDiag(tf.zeros([self.N_z]), tf.ones([self.N_z]))
+        self.s1gen_noise = multNormal2.sample_n(self.batch_size) # batch x N_z
+        print('s1gen_noise : {}'.format(self.s1gen_noise))
+        self.s1gen_input = tf.concat([self.s1gen_noise, self.s1gen_input], 1) # batch x (100 + 128)
+
 
         self.cond_aug = self.condAugment(self.sent, 's1')
         self.G_z = self.stage1_generator(self.cond_aug, self.z)
@@ -50,7 +62,7 @@ class StackGAN(object):
 
         self.saver = tf.train.Saver(max_to_keep = 1)
 
-    def training():
+    def training(self):
 
 
 
@@ -70,20 +82,40 @@ class StackGAN(object):
             return self.cond_c_o
 
 
-    # TODO: finish generator with nearest neighbor upscaling
-    def stage1_generator(self, c):
+    # TODO: finish generator with nearest neighbor upsampling
+    def stage1_generator(self, c, z):
         #
         # g_h1, g_w1 = deconv_size(self.H_o, 2), deconv_size(self.W_o, 2) # 64 x 64 -> 32 x 32
         # g_h2, g_w2 = deconv_size(g_h1, 2), deconv_size(g_w1, 2) # 32 x 32 -> 16 x 16
 
         with tf.variable_scope('s1_generator') as scope:
             # maybe we can try tf.image.resize_nearest_neighbor as in the paper
+            self.s1g_input = tf.concat([z, c], 1)
+            self.s1g_lin_noise = tf.nn.relu(linear(self.s1g_input, self.s16 * self.s16 * self.gfc_dim * 8, 's1g_lin_1'))
+            self.s1g_reshape = tf.reshape(self.s1g_lin_noise, [-1, self.s16, self.s16, self.gfc_dim * 8])
+            self.s1g_batch = self.s1g_batch_norm_0(self.s1g_reshape)
 
-            ## concat with noise
-            multNormal2 = ds.MultivariateNormalDiag(tf.zeros([self.N_z]), tf.ones([self.N_z]))
-            self.s1gen_noise = multNormal2.sample_n(self.batch_size) # batch x N_z
-            print('s1gen_noise : {}'.format(self.s1gen_noise))
-            self.s1gen_input = tf.concat([self.s1gen_noise, self.s1gen_input], 1) # batch x (100 + 128)
+            # 1st nearest neighbor upsampling & conv2d
+            self.s1g_nn_1 = tf.image.resize_nearest_neighbor(self.s1g_batch, [self.s8, self.s8], name = 's1g_nn_1')
+            self.s1g_conv_1 = conv2d(self.s1g_nn_1, self.gfc_dim * 4, name = 's1g_conv_1')
+            self.s1g_conv_1_batch_relu = tf.nn.relu(self.s1g_conv_1)
+
+            # 2nd nearest neighbor upsampling & conv2d
+            self.s1g_nn_2 = tf.image.resize_nearest_neighbor(self.s1g_conv_1_batch_relu, [self.s4, self.s4], name = 's1g_nn_2')
+            self.s1g_conv_2 = conv2d(self.s1g_nn_2, self.gfc_dim * 2, name = 's1g_conv_2')
+            self.s1g_conv_2_batch_relu = tf.nn.relu(self.s1g_conv_2)
+
+            # 3rd nearest neighbor upsampling & conv2d
+            self.s1g_nn_3 = tf.image.resize_nearest_neighbor(self.s1g_conv_2_batch_relu, [self.s2, self.s2], name = 's1g_nn_3')
+            self.s1g_conv_3 = conv2d(self.s1g_nn_3, self.gfc_dim, name = 's1g_conv_3')
+            self.s1g_conv_3_batch_relu = tf.nn.relu(self.s1g_conv_3)
+
+            # 4th nearest neighbor upsampling & conv2d
+            self.s1g_nn_4 = tf.image.resize_nearest_neighbor(self.s1g_conv_3_batch_relu, [self.s, self.s], name = 's1g_nn_4')
+            self.s1g_conv_4 = conv2d(self.s1g_nn_4, self.c_dim, name = 's1g_conv_4')
+            self.s1g_conv_4_batch_relu = tf.nn.relu(self.s1g_conv_4)
+
+            return self.s1g_conv_4_batch_relu
 
 
     # it actually doesn't matter to use dcgan generator or stackGAN generator
