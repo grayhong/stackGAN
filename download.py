@@ -58,7 +58,7 @@ def save_response_content(response, destination):
         for chunk in response.iter_content(chunk_size):
             if chunk:  # filter out keep-alive new chunks
                 f.write(chunk)
-    print('saved {}'.format(destination)) 
+    print('saved {}'.format(destination))
 
 
 # Extract .tar.gz and .tgz files
@@ -84,24 +84,20 @@ def download_extract_tar(id, data_dir):
 
 # Download CUB dataset
 def download_cub(data_dir):
-    data_dir = os.path.join(data_dir, 'cub')
-    if os.path.exists(data_dir):
+    if os.path.exists(os.path.join(data_dir, 'cub')):
         print('Found CUB - skip')
         return
-    
-    os.mkdir(data_dir)
+
     url = '0B-y41dOfPRwROVBWUjlpM1BhbzQ'
     download_extract_tar(url, data_dir)
 
 
 # Download Oxford-102 dataset
 def download_oxford_102(data_dir):
-    data_dir = os.path.join(data_dir, 'oxford-102')
-    if os.path.exists(data_dir):
+    if os.path.exists(os.path.join(data_dir, 'oxford-102')):
         print('Found Oxford-102 - skip')
         return
 
-    os.mkdir(data_dir)
     url = '0B-y41dOfPRwRUzVxU3pMTEtaT1U'
     download_extract_tar(url, data_dir)
 
