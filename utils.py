@@ -43,6 +43,9 @@ class Annotated_MNIST():
 
         self.idx2word = {idx: word for (word, idx) in self.word2idx.items()}
 
+    def get_sample_num(self):
+        return mnist.train.num_examples
+
 
     def get_nums(self, num):
         idx = np.where(self.labels == num)[0]
@@ -219,7 +222,7 @@ class Annotated_MNIST():
             batch_ys = labels
 
             return descriptions, batch_xs, batch_xs_small, batch_ys
-        
+
         else:
             batch_xs = np.reshape(images, [-1, 784])
             batch_ys = labels
@@ -254,7 +257,7 @@ class Annotated_MNIST():
                 sentences[i] = list(map(self.word2idx.get, sentences[i]))
 
             return sentences
-        
+
         else:
 
             return sentences

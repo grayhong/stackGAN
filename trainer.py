@@ -31,9 +31,8 @@ class Trainer(object):
         self.N_s1_img = self.N_d * self.N_d * self.c_dim
 
         if self.dataset_name == 'mnist':
-            self.input_sample = input_data.read_data_sets("./mnist/data/", one_hot=True)
-            self.total_sample = self.input_sample.train.num_examples
-            self.annotated_MNIST = Annotated_MNIST(train=False);
+            self.annotated_MNIST = Annotated_MNIST(train=True);
+            self.total_sample = self.annotated_MNIST.get_sample_num()
 
 
         self.build_model()
