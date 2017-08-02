@@ -1,13 +1,8 @@
 from __future__ import print_function
 
 import os
-import StringIO
-import scipy.misc
 import numpy as np
-from glob import glob
-from tqdm import trange
-from itertools import chain
-from collections import deque
+import tensorflow as tf
 
 from models import *
 from utils import Annotated_MNIST
