@@ -9,7 +9,7 @@ from utils import Annotated_MNIST
 
 
 class Trainer(object):
-    def __init__(self, sess, N_g = 28, N_z = 100, N_d = 28, N_embed = 300,
+    def __init__(self, sess, N_g = 28, N_z = 100, N_d = 28, N_embed = 300, dataset_name='mnist'
      W_o = 28, H_o = 28, c_dim = 1, gfc_dim = 128, ld = 1, batch_size = 64):
         self.sess = sess
         self.N_g = N_g
@@ -23,6 +23,8 @@ class Trainer(object):
 
         self.gfc_dim = gfc_dim
         self.batch_size = batch_size
+
+        self.dataset_name = dataset_name
 
         self.ld = ld
 
