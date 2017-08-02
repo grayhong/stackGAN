@@ -10,8 +10,7 @@ from itertools import chain
 from collections import deque
 
 from models import *
-from utils import save_image
-import Annotated_MNIST
+import utils
 
 
 class Trainer(object):
