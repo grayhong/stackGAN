@@ -2,8 +2,22 @@ import tensorflow as tf
 
 from ops import *
 
+def condAugment(self, embed, normal_dist, scope):
 
-def stage1_generator(c, z, image_size = [64, 64, 3], gfc_dim = 128):
+    with tf.variable_scope(scope or 'condAugment'):
+        ## make mu, sigma
+        cond_gen = tf.reshape(linear(embed, N_g * 2, scope='condAugmentGen'), [-1, N_g, 2]) # batch x N_g x 2
+        cond_mu_o = cond_gen[0] # batch x N_g
+        cond_sigma_o = cond_gen[1] # batch x N_g
+        ## do reparametrization
+        cond_epsilon = normal_dist.sample_n(batch_size) # batch x N_g
+        print('cond_epsilon : {}'.format(cond_epsilon))
+        cond_c_o = cond_mu_o + tf.multiply(cond_sigma_o, cond_epsilon)
+
+        return cond_c_o, cond_mu_o, cond_sigma_o
+
+
+def stage1_generator(c, z, image_size = [28, 28, 1], gfc_dim = 128):
 
     s = image_size[0]
     s2, s4, s8, s16 = int(s / 2), int(s / 4), int(s / 8), int(s / 16)
@@ -39,7 +53,7 @@ def stage1_generator(c, z, image_size = [64, 64, 3], gfc_dim = 128):
     variables = tf.contrib.framework.get_variables(scope)
     return s1g_conv_4_batch_relu, variables
 
-def stage1_discriminator(embed, image, image_size = [64, 64, 3], M_d = 4, N_d = 128, df_dim = 1024, reuse = False):
+def stage1_discriminator(embed, image, image_size = [28, 28, 1], M_d = 4, N_d = 28, df_dim = 1024, reuse = False):
 
     W_o, H_o, c_dim = image_size[0], image_size[1], image_size[2]
 
@@ -74,6 +88,6 @@ def stage1_discriminator(embed, image, image_size = [64, 64, 3], M_d = 4, N_d = 
         s1d_1conv_batch_lrelu = leakyReLU(s1d_batch_norm_4(s1d_1conv))
 
         s1d_1conv_lin = linear(s1d_1conv, 1, 's1d_1conv_lin')
-        
+
     variables = tf.contrib.framework.get_variables(scope)
     return tf.nn.sigmoid(s1d_1conv_lin), variables

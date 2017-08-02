@@ -11,218 +11,125 @@ from collections import deque
 
 from models import *
 from utils import save_image
+import Annotated_MNIST
 
-def next(loader):
-    return loader.next()[0].data.numpy()
-
-def to_nhwc(image, data_format):
-    if data_format == 'NCHW':
-        new_image = nchw_to_nhwc(image)
-    else:
-        new_image = image
-    return new_image
-
-def to_nchw_numpy(image):
-    if image.shape[3] in [1, 3]:
-        new_image = image.transpose([0, 3, 1, 2])
-    else:
-        new_image = image
-    return new_image
-
-def norm_img(image, data_format=None):
-    image = image/127.5 - 1.
-    if data_format:
-        image = to_nhwc(image, data_format)
-    return image
-
-def denorm_img(norm, data_format):
-    return tf.clip_by_value(to_nhwc((norm + 1)*127.5, data_format), 0, 255)
-
-def slerp(val, low, high):
-    """Code from https://github.com/soumith/dcgan.torch/issues/14"""
-    omega = np.arccos(np.clip(np.dot(low/np.linalg.norm(low), high/np.linalg.norm(high)), -1, 1))
-    so = np.sin(omega)
-    if so == 0:
-        return (1.0-val) * low + val * high # L'Hopital's rule/LERP
-    return np.sin((1.0-val)*omega) / so * low + np.sin(val*omega) / so * high
 
 class Trainer(object):
-    def __init__(self, config, img_loader, txt_loader):
-        self.config = config
-        self.img_loader = img_loader
-        self.txt_loader = txt_loader
-        self.dataset = config.dataset
+    def __init__(self, sess, N_g = 28, N_z = 100, N_d = 28, N_embed = 300,
+     W_o = 28, H_o = 28, c_dim = 1, gfc_dim = 128, ld = 1, batch_size = 64):
+        self.N_g = N_g
+        self.N_z = N_z
+        self.N_d = N_d
+        self.N_embed = N_embed
+        self.W_o = W_o
+        self.H_o = H_o
+        self.c_dim = c_dim
 
-        self.beta1 = config.beta1
-        self.beta2 = config.beta2
-        self.optimizer = config.optimizer
-        self.batch_size = config.batch_size
+        self.s = W_o
+        self.s2, self.s4, self.s8, self.s16 =\
+            int(self.s / 2), int(self.s / 4), int(self.s / 8), int(self.s / 16)
 
-        self.step = tf.Variable(0, name='step', trainable=False)
 
-        self.g_lr = tf.Variable(config.g_lr, name='g_lr')
-        self.d_lr = tf.Variable(config.d_lr, name='d_lr')
+        self.gfc_dim = gfc_dim
+        self.batch_size = batch_size
 
-        self.g_lr_update = tf.assign(self.g_lr, tf.maximum(self.g_lr * 0.5, config.lr_lower_boundary), name='g_lr_update')
-        self.d_lr_update = tf.assign(self.d_lr, tf.maximum(self.d_lr * 0.5, config.lr_lower_boundary), name='d_lr_update')
+        self.ld = ld
 
-        self.gamma = config.gamma
-        self.lambda_k = config.lambda_k
+        self.N_s1_img = self.N_d * self.N_d * self.c_dim
 
-        self.z_num = config.z_num
-        self.conv_hidden_num = config.conv_hidden_num
-        self.input_scale_size = config.input_scale_size
+        if self.dataset_name == 'mnist':
+            self.input_sample = input_data.read_data_sets("./mnist/data/", one_hot=True)
+            self.total_sample = self.input_sample.train.num_examples
+            self.annotated_MNIST = Annotated_MNIST(train=False);
 
-        self.model_dir = config.model_dir
-        self.load_path = config.load_path
 
-        self.use_gpu = config.use_gpu
-        self.data_format = config.data_format
-
-        _, height, width, self.channel = \
-                get_conv_shape(self.data_loader, self.data_format)
-        self.repeat_num = int(np.log2(height)) - 2
-
-        self.start_step = 0
-        self.log_step = config.log_step
-        self.max_step = config.max_step
-        self.save_step = config.save_step
-        self.lr_update_step = config.lr_update_step
-
-        self.is_train = config.is_train
         self.build_model()
 
-        self.saver = tf.train.Saver()
-        self.summary_writer = tf.summary.FileWriter(self.model_dir)
+    def get_noise(self, batch_size):
+        multNormal = ds.MultivariateNormalDiag(tf.zeros([self.N_z]), tf.ones([self.N_z]))
+        s1gen_noise = multNormal.sample_n(self.batch_size) # batch x N_z
+        print('s1gen_noise : {}'.format(self.s1gen_noise))
+        return s1gen_noise
 
-        sv = tf.train.Supervisor(logdir=self.model_dir,
-                                is_chief=True,
-                                saver=self.saver,
-                                summary_op=None,
-                                summary_writer=self.summary_writer,
-                                save_model_secs=300,
-                                global_step=self.step,
-                                ready_for_local_init_op=None)
+    def train(self, total_epoch=100, sample_size = 10):
+        self.train_D = tf.train.AdamOptimizer(1e-4, beta1=0.5)\
+                                .minimize(-self.loss_D, var_list = self.d_vars)
+        self.train_G = tf.train.AdamOptimizer(2e-4, beta1=0.5)\
+                                .minimize(-self.loss_G, var_list = self.g_vars)
 
-        gpu_options = tf.GPUOptions(allow_growth=True)
-        sess_config = tf.ConfigProto(allow_soft_placement=True,
-                                    gpu_options=gpu_options)
+        total_batch = int(self.total_sample/self.batch_size)
+        loss_val_D, loss_val_G = 0, 0
 
-        self.sess = sv.prepare_or_wait_for_session(config=sess_config)
 
-        if not self.is_train:
-            # dirty way to bypass graph finilization error
-            g = tf.get_default_graph()
-            g._finalized = False
+        self.sess.run(tf.global_variables_initializer())
+        for epoch in range(total_epoch):
+            for i in range(total_batch):
+                sent, batch_x, batch_y = self.annotated_MNIST(self.batch_size)
+                noise = self.get_noise(self.batch_size)
 
-            self.build_test_model()
+                _, loss_val_D = self.sess.run([self.train_D, self.loss_D], feed_dict = {self.sent: sent, self.x: batch_x, self.z: noise})
+                _, loss_val_G = self.sess.run([self.train_G, self.loss_G], feed_dict = {self.sent: sent, self.z: noise})
 
-    def train(self):
-        z_fixed = np.random.uniform(-1, 1, size=(self.batch_size, self.z_num))
+            print('Epoch: ', '%04d' % epoch,
+                  'D loss: {:.4}'.format(loss_val_D),
+                  'G loss: {:.4}'.format(loss_val_G))
 
-        x_fixed = self.get_image_from_loader()
-        save_image(x_fixed, '{}/x_fixed.png'.format(self.model_dir))
+            #if epoch == 0 or (epoch + 1) % 10 == 0:
+            noise = self.get_noise(self.sample_size)
+            sent_indices = self.annotated_MNIST.generate_sentences(sample_size)
+            samples = self.sess.run(self.s1_G_z, feed_dict={self.z: noise, self.sent: sent_indices})
+            sentences = self.annotated_MNIST.conver_to_idx(sent_indices)
 
-        prev_measure = 1
-        measure_history = deque([0]*self.lr_update_step, self.lr_update_step)
 
-        for step in trange(self.start_step, self.max_step):
-            fetch_dict = {
-                "k_update": self.k_update,
-                "measure": self.measure,
-            }
-            if step % self.log_step == 0:
-                fetch_dict.update({
-                    "summary": self.summary_op,
-                    "g_loss": self.g_loss,
-                    "d_loss": self.d_loss,
-                    "k_t": self.k_t,
-                })
-            result = self.sess.run(fetch_dict)
+            fig, ax = plt.subplots(1, sample_size, figsize=(sample_size, 1))
 
-            measure = result['measure']
-            measure_history.append(measure)
+            for i in range(sample_size):
+                ax[i].set_axis_off()
+                ax[i].imshow(np.reshape(samples[i], (28, 28)), cmap='Greys')
+                ax[i].title(sentences[i])
 
-            if step % self.log_step == 0:
-                self.summary_writer.add_summary(result['summary'], step)
-                self.summary_writer.flush()
+            plt.savefig('samples/{}.png'.format(str(epoch).zfill(3)), bbox_inches='tight')
+            plt.close(fig)
 
-                g_loss = result['g_loss']
-                d_loss = result['d_loss']
-                k_t = result['k_t']
-
-                print("[{}/{}] Loss_D: {:.6f} Loss_G: {:.6f} measure: {:.4f}, k_t: {:.4f}". \
-                      format(step, self.max_step, d_loss, g_loss, measure, k_t))
-
-            if step % (self.log_step * 10) == 0:
-                x_fake = self.generate(z_fixed, self.model_dir, idx=step)
-                self.autoencode(x_fixed, self.model_dir, idx=step, x_fake=x_fake)
-
-            if step % self.lr_update_step == self.lr_update_step - 1:
-                self.sess.run([self.g_lr_update, self.d_lr_update])
-                #cur_measure = np.mean(measure_history)
-                #if cur_measure > prev_measure * 0.99:
-                #prev_measure = cur_measure
 
     def build_model(self):
-        self.x = self.img_loader
-        self.text = self.txt_loader
-        x = norm_img(self.x)
+        self.z = tf.placeholder(tf.float32, [None, self.N_z])
+        self.sent = tf.placeholder(tf.float32, [None, self.N_embed]) # idx seq x batch_size
+        self.x = tf.placeholder(tf.float32, [None, self.N_s1_img])
 
-        self.z = tf.random_uniform(
-                (tf.shape(x)[0], self.z_num), minval=-1.0, maxval=1.0)
-        self.k_t = tf.Variable(0., trainable=False, name='k_t')
+        init_width = 0.5 / self.embed_size
+        self.embed = tf.Variable(tf.random_uniform([self.vocab_size, self.embed_size], -init_width, init_width), name='embed')
 
-        G, self.G_var = GeneratorCNN(
-                self.z, self.conv_hidden_num, self.channel,
-                self.repeat_num, self.data_format, reuse=False)
+        # embedding
+        self.sent_embed_seq = tf.nn.embedding_lookup(self.embed, self.sent, name='sent_embed')
+        self.sent_embed = tf.reduce_sum(self.sent_embed_seq, 1, keep_dims = True)
 
-        d_out, self.D_z, self.D_var = DiscriminatorCNN(
-                tf.concat([G, x], 0), self.channel, self.z_num, self.repeat_num,
-                self.conv_hidden_num, self.data_format)
-        AE_G, AE_x = tf.split(d_out, 2)
+        # conditional augmentation
+        self.multNormal1 = ds.MultivariateNormalDiag(tf.zeros([self.N_z]), tf.ones([self.N_z]))
+        self.s1_c, self.s1_mu_o, self.s1_sigma_o = condAugment(self.sent_embed, self.multNormal1, 's1')
+        self.multNormal2 = ds.MultivariateNormalDiag(self.s1_mu_o, self.s1_sigma_o)
+        self.kl = tf.contrib.distributions.kl_divergence(self.multNormal2, self.multNormal1);
 
-        self.G = denorm_img(G, self.data_format)
-        self.AE_G, self.AE_x = denorm_img(AE_G, self.data_format), denorm_img(AE_x, self.data_format)
 
-        if self.optimizer == 'adam':
-            optimizer = tf.train.AdamOptimizer
-        else:
-            raise Exception("[!] Caution! Paper didn't use {} opimizer other than Adam".format(config.optimizer))
+        # concat with noise
+        self.s1_G_input = tf.concat([self.z, self.s1_c], 1) # batch x (100 + 128)
+        self.s1_G_z, self.s1_G_vars = stage1_generator(self.s1_G_input, self.z)
+        self.s1_D_G_z, self.s1_D_vars = stage1_discriminator(self.sent_embed, self.G_z)
+        self.s1_D_x, self.s1_D_vars = stage1_discriminator(self.sent_embed, self.x, reuse = True)
 
-        g_optimizer, d_optimizer = optimizer(self.g_lr), optimizer(self.d_lr)
+        # loss
+        self.loss_D = tf.reduce_mean(tf.log(self.s1_D_x) + tf.log(1 - self.s1_D_G_z))
+        self.loss_G = tf.reduce_mean(tf.log(1 - self.s1_D_G_z)) + self.ld * self.kl;
 
-        self.d_loss_real = tf.reduce_mean(tf.abs(AE_x - x))
-        self.d_loss_fake = tf.reduce_mean(tf.abs(AE_G - G))
+        t_var = tf.trainable_variables()
 
-        self.d_loss = self.d_loss_real - self.k_t * self.d_loss_fake
-        self.g_loss = tf.reduce_mean(tf.abs(AE_G - G))
+        self.s1g_vars = [v for v in t_var if 's1g_' in v.name]
+        self.s1d_vars = [v for v in t_var if 's1d_' in v.name]
+        print(self.s1g_vars)
+        print(self.s1d_vars)
 
-        d_optim = d_optimizer.minimize(self.d_loss, var_list=self.D_var)
-        g_optim = g_optimizer.minimize(self.g_loss, global_step=self.step, var_list=self.G_var)
+        self.saver = tf.train.Saver(max_to_keep = 1)
 
-        self.balance = self.gamma * self.d_loss_real - self.g_loss
-        self.measure = self.d_loss_real + tf.abs(self.balance)
-
-        with tf.control_dependencies([d_optim, g_optim]):
-            self.k_update = tf.assign(
-                self.k_t, tf.clip_by_value(self.k_t + self.lambda_k * self.balance, 0, 1))
-
-        self.summary_op = tf.summary.merge([
-            tf.summary.image("G", self.G),
-            tf.summary.image("AE_G", self.AE_G),
-            tf.summary.image("AE_x", self.AE_x),
-
-            tf.summary.scalar("loss/d_loss", self.d_loss),
-            tf.summary.scalar("loss/d_loss_real", self.d_loss_real),
-            tf.summary.scalar("loss/d_loss_fake", self.d_loss_fake),
-            tf.summary.scalar("loss/g_loss", self.g_loss),
-            tf.summary.scalar("misc/measure", self.measure),
-            tf.summary.scalar("misc/k_t", self.k_t),
-            tf.summary.scalar("misc/d_lr", self.d_lr),
-            tf.summary.scalar("misc/g_lr", self.g_lr),
-            tf.summary.scalar("misc/balance", self.balance),
-        ])
 
     def build_test_model(self):
         with tf.variable_scope("test") as vs:
