@@ -1,43 +1,22 @@
+import os
 import numpy as np
 import tensorflow as tf
 
 from trainer import Trainer
-from config import get_config
-from data_loader import get_loader
-from utils import prepare_dirs_and_logger, save_config
 
-def main(config):
-    prepare_dirs_and_logger(config)
+def main():
+    flags = tf.app.flags
+    flags.DEFINE_integer("epoch", 25, "Epoch to train [25]")
+    flags.DEFINE_float("learning_rate", 0.0002, "Learning rate of for adam [0.0002]")
+    flags.DEFINE_float("beta1", 0.5, "Momentum term of adam [0.5]")
+    FLAGS = flags.FLAGS
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
 
-    rng = np.random.RandomState(config.random_seed)
-    tf.set_random_seed(config.random_seed)
+    with tf.Session(config=config) as sess:
+        stackGAN = Trainer(sess)
+        stackGAN.train()
 
-    if config.is_train:
-        data_path = config.data_path
-        batch_size = config.batch_size
-        do_shuffle = True
-    else:
-        setattr(config, 'batch_size', 64)
-        if config.test_data_path is None:
-            data_path = config.data_path
-        else:
-            data_path = config.test_data_path
-        batch_size = config.sample_per_image
-        do_shuffle = False
 
-    img_data_loader, txt_data_loader = get_loader(
-            data_path, config.batch_size, config.input_scale_size,
-            config.data_format, config.split)
-    trainer = Trainer(config, img_data_loader, txt_data_loader)
-
-    if config.is_train:
-        save_config(config)
-        trainer.train()
-    else:
-        if not config.load_path:
-            raise Exception("[!] You should specify `load_path` to load a pretrained model")
-        trainer.test()
-
-if __name__ == "__main__":
-    config, unparsed = get_config()
-    main(config)
+if __name__ == '__main__':
+    main()
